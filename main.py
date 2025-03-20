@@ -21,7 +21,7 @@ class Codec:
         self,
         path: Path | str = "annuvin/snac_24khz-st",
         device: str = "cuda",
-        dtype: str = "float16",
+        dtype: str = "float32",
     ) -> None:
         if not (path := Path(path)).is_dir():
             path = Path(hf.snapshot_download(path.as_posix()))
@@ -46,7 +46,7 @@ class Codec:
         return audio[:, :max_len]
 
     def save(self, audio: torch.FloatTensor, path: Path | str) -> None:
-        torchaudio.save(audio.float().cpu(), path, self.model.sampling_rate)
+        torchaudio.save(path, audio.squeeze(0).float().cpu(), self.model.sampling_rate)
 
     def encode(self, audio: torch.FloatTensor | Path | str) -> list[torch.LongTensor]:
         if isinstance(audio, Path) or isinstance(audio, str):
@@ -58,6 +58,7 @@ class Codec:
 
     def decode(self, codes: list[torch.LongTensor]) -> torch.FloatTensor:
         with torch.inference_mode():
+            codes = [c.to(self.device) for c in codes]
             return self.model.decode(codes)
 
 
@@ -99,7 +100,7 @@ class Model:
         typical_p: float = 1.0,
         temp: float = 0.6,
         repeat_penalty: float = 1.1,
-    ) -> str:
+    ) -> list[torch.LongTensor]:
         reference = []
 
         for i in range(codes[0].shape[1]):
@@ -147,38 +148,27 @@ class Model:
 
             outputs.append(token)
 
-        print(self.decode(outputs))
-        return outputs
+        outputs = outputs[: len(outputs) // 7 * 7]
+        outputs = [o - 128266 for o in outputs]
 
-        # code_lists = []
-        # for row in processed_rows:
-        #     row_length = row.size(0)
-        #     new_length = (row_length // 7) * 7
-        #     trimmed_row = row[:new_length]
-        #     trimmed_row = [t - 128266 for t in trimmed_row]
-        #     code_lists.append(trimmed_row)
+        layer_1 = []
+        layer_2 = []
+        layer_3 = []
 
-        # def redistribute_codes(code_list):
-        # layer_1 = []
-        # layer_2 = []
-        # layer_3 = []
-        # for i in range((len(code_list)+1)//7):
-        #     layer_1.append(code_list[7*i])
-        #     layer_2.append(code_list[7*i+1]-4096)
-        #     layer_3.append(code_list[7*i+2]-(2*4096))
-        #     layer_3.append(code_list[7*i+3]-(3*4096))
-        #     layer_2.append(code_list[7*i+4]-(4*4096))
-        #     layer_3.append(code_list[7*i+5]-(5*4096))
-        #     layer_3.append(code_list[7*i+6]-(6*4096))
-        # codes = [torch.tensor(layer_1).unsqueeze(0),
-        #         torch.tensor(layer_2).unsqueeze(0),
-        #         torch.tensor(layer_3).unsqueeze(0)]
-        # audio_hat = snac_model.decode(codes)
+        for i in range((len(outputs) + 1) // 7):
+            layer_1.append(outputs[7 * i])
+            layer_2.append(outputs[7 * i + 1] - 4096)
+            layer_3.append(outputs[7 * i + 2] - (2 * 4096))
+            layer_3.append(outputs[7 * i + 3] - (3 * 4096))
+            layer_2.append(outputs[7 * i + 4] - (4 * 4096))
+            layer_3.append(outputs[7 * i + 5] - (5 * 4096))
+            layer_3.append(outputs[7 * i + 6] - (6 * 4096))
 
-        # my_samples = []
-        # for code_list in code_lists:
-        # samples = redistribute_codes(code_list)
-        # my_samples.append(samples)
+        return [
+            torch.LongTensor([layer_1]),
+            torch.LongTensor([layer_2]),
+            torch.LongTensor([layer_3]),
+        ]
 
     def unload(self):
         if self.model._sampler:
@@ -226,10 +216,12 @@ if __name__ == "__main__":
     print(transcript)
 
     codes = model.generate(codes, transcript, text)
-    print(codes)
+    print(codes[0].device, codes[0].dtype, codes[0].shape)
+    print(codes[1].device, codes[1].dtype, codes[1].shape)
+    print(codes[2].device, codes[2].dtype, codes[2].shape)
 
-    # audio = codec.decode(codes)
-    # print(audio.device, audio.dtype, audio.shape)
+    audio = codec.decode(codes)
+    print(audio.device, audio.dtype, audio.shape)
 
-    # codec.save(audio, "output.wav")
+    codec.save(audio, "output.wav")
     model.unload()
