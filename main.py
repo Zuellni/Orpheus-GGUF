@@ -46,7 +46,7 @@ class Codec:
         return audio[:, :max_len]
 
     def save(self, audio: torch.FloatTensor, path: Path | str) -> None:
-        torchaudio.save(path, audio.squeeze(0).float().cpu(), self.model.sampling_rate)
+        torchaudio.save(path, audio.cpu(), self.model.sampling_rate)
 
     def encode(self, audio: torch.FloatTensor | Path | str) -> list[torch.LongTensor]:
         if isinstance(audio, Path) or isinstance(audio, str):
@@ -59,15 +59,15 @@ class Codec:
     def decode(self, codes: list[torch.LongTensor]) -> torch.FloatTensor:
         with torch.inference_mode():
             codes = [c.to(self.device) for c in codes]
-            return self.model.decode(codes)
+            return self.model.decode(codes).float().squeeze(0)
 
 
 class Model:
     def __init__(
         self,
-        path: Path | str = "annuvin/orpheus-3b-0.1-ft-gguf",
+        path: Path | str = "annuvin/orpheus-3b-0.1-pretrained-gguf",
         file: str = "model.q8_0.gguf",
-        context: int = 4096,
+        context: int = 8192,
         flash_attn: bool = True,
     ) -> None:
         if not (path := Path(path)).is_file():
@@ -94,23 +94,23 @@ class Model:
         codes: list[torch.LongTensor],
         transcript: str,
         text: str,
-        top_k: int = 40,
+        top_k: int = 50,
         top_p: float = 0.9,
         min_p: float = 0.0,
         typical_p: float = 1.0,
-        temp: float = 0.6,
+        temp: float = 0.5,
         repeat_penalty: float = 1.1,
     ) -> list[torch.LongTensor]:
-        reference = []
+        ids = []
 
         for i in range(codes[0].shape[1]):
-            reference.append(codes[0][0][i].item() + 128266)
-            reference.append(codes[1][0][2 * i].item() + 128266 + 4096)
-            reference.append(codes[2][0][4 * i].item() + 128266 + (2 * 4096))
-            reference.append(codes[2][0][(4 * i) + 1].item() + 128266 + (3 * 4096))
-            reference.append(codes[1][0][(2 * i) + 1].item() + 128266 + (4 * 4096))
-            reference.append(codes[2][0][(4 * i) + 2].item() + 128266 + (5 * 4096))
-            reference.append(codes[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
+            ids.append(codes[0][0][i].item() + 128266)
+            ids.append(codes[1][0][2 * i].item() + 128266 + 4096)
+            ids.append(codes[2][0][4 * i].item() + 128266 + (2 * 4096))
+            ids.append(codes[2][0][(4 * i) + 1].item() + 128266 + (3 * 4096))
+            ids.append(codes[1][0][(2 * i) + 1].item() + 128266 + (4 * 4096))
+            ids.append(codes[2][0][(4 * i) + 2].item() + 128266 + (5 * 4096))
+            ids.append(codes[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
 
         # start_ids = [128259]
         # start_tokens = "<custom_token_3>"
@@ -126,10 +126,10 @@ class Model:
         # final = f"<custom_token_3>{text}<|eot_id|><custom_token_4><custom_token_5><custom_token_1>
 
         inputs = [128259] + self.encode(transcript) + [128009, 128260, 128261, 128257]
-        inputs += reference + [128258, 128262]
+        inputs += ids + [128258, 128262]
         inputs += [128259] + self.encode(text) + [128009, 128260, 128261, 128257]
 
-        max_tokens = self.model.n_ctx() - len(inputs)
+        max_tokens = max(0, self.model.n_ctx() - len(inputs))
         outputs = []
 
         for token in self.model.generate(
@@ -141,7 +141,7 @@ class Model:
             temp=temp,
             repeat_penalty=repeat_penalty,
         ):
-            # <|eot_id|> = 128009, 128258 = <custom_token_2>
+            # <|eot_id|> = 128009, <custom_token_2> = 128258
             # self.model.token_eos()
             if token in [128009, 128258] or len(outputs) >= max_tokens:
                 break
@@ -151,23 +151,23 @@ class Model:
         outputs = outputs[: len(outputs) // 7 * 7]
         outputs = [o - 128266 for o in outputs]
 
+        layer_0 = []
         layer_1 = []
         layer_2 = []
-        layer_3 = []
 
         for i in range((len(outputs) + 1) // 7):
-            layer_1.append(outputs[7 * i])
-            layer_2.append(outputs[7 * i + 1] - 4096)
-            layer_3.append(outputs[7 * i + 2] - (2 * 4096))
-            layer_3.append(outputs[7 * i + 3] - (3 * 4096))
-            layer_2.append(outputs[7 * i + 4] - (4 * 4096))
-            layer_3.append(outputs[7 * i + 5] - (5 * 4096))
-            layer_3.append(outputs[7 * i + 6] - (6 * 4096))
+            layer_0.append(outputs[7 * i])
+            layer_1.append(outputs[7 * i + 1] - 4096)
+            layer_2.append(outputs[7 * i + 2] - (2 * 4096))
+            layer_2.append(outputs[7 * i + 3] - (3 * 4096))
+            layer_1.append(outputs[7 * i + 4] - (4 * 4096))
+            layer_2.append(outputs[7 * i + 5] - (5 * 4096))
+            layer_2.append(outputs[7 * i + 6] - (6 * 4096))
 
         return [
+            torch.LongTensor([layer_0]),
             torch.LongTensor([layer_1]),
             torch.LongTensor([layer_2]),
-            torch.LongTensor([layer_3]),
         ]
 
     def unload(self):
@@ -193,14 +193,14 @@ class Whisper:
         )
 
     def transcribe(self, audio: torch.FloatTensor) -> str:
-        return self.model(audio.squeeze().numpy())["text"]
+        return self.model(audio.squeeze().numpy())["text"].strip()
 
 
 if __name__ == "__main__":
     speaker = "D:/AI/TTS/Voices/Alice.wav"
     text = "The quick brown fox jumped over the lazy dog."
 
-    codec = Codec("D:/AI/TTS/Orpheus/Models/Snake")
+    codec = Codec("D:/AI/TTS/Orpheus/Models/Codec")
     model = Model("D:/AI/TTS/Orpheus/Models/Orpheus/model.q8_0.gguf")
     whisper = Whisper("D:/AI/TTS/Models/Turbo")
 
