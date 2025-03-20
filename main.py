@@ -1,8 +1,5 @@
 import json
 from pathlib import Path
-from warnings import simplefilter
-
-simplefilter("ignore")
 
 import huggingface_hub as hf
 import safetensors.torch as st
@@ -13,13 +10,11 @@ import transformers
 from llama_cpp import Llama
 from snac import SNAC
 
-transformers.logging.set_verbosity_error()
-
 
 class Codec:
     def __init__(
         self,
-        path: Path | str = "annuvin/snac_24khz-st",
+        path: Path | str = "annuvin/snac-24khz-st",
         device: str = "cuda",
         dtype: str = "float32",
     ) -> None:
@@ -65,9 +60,9 @@ class Codec:
 class Model:
     def __init__(
         self,
-        path: Path | str = "annuvin/orpheus-3b-0.1-pretrained-gguf",
-        file: str = "model.q8_0.gguf",
-        context: int = 8192,
+        path: Path | str = "annuvin/orpheus-3b-0.1-pt-gguf",
+        file: str = "model.q4_k.gguf",
+        context: int = 4096,
         flash_attn: bool = True,
     ) -> None:
         if not (path := Path(path)).is_file():
@@ -83,7 +78,7 @@ class Model:
             verbose=False,
         )
 
-    def encode(self, text: str, bos: bool = False, special: bool = False) -> list[int]:
+    def encode(self, text: str, bos: bool = True, special: bool = False) -> list[int]:
         return self.model.tokenize(text.encode(), bos, special)
 
     def decode(self, tokens: list[int], special: bool = False) -> str:
@@ -94,7 +89,7 @@ class Model:
         codes: list[torch.LongTensor],
         transcript: str,
         text: str,
-        top_k: int = 50,
+        top_k: int = 40,
         top_p: float = 0.9,
         min_p: float = 0.0,
         typical_p: float = 1.0,
@@ -113,12 +108,11 @@ class Model:
             ids.append(codes[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
 
         # start_ids = [128259]
-        # start_tokens = "<custom_token_3>"
-
         # end_ids = [128009, 128260, 128261, 128257]
-        # end_tokens = "<|eot_id|><custom_token_4><custom_token_5><custom_token_1>"
-
         # final_ids = [128258, 128262]
+
+        # start_tokens = "<custom_token_3>"
+        # end_tokens = "<|eot_id|><custom_token_4><custom_token_5><custom_token_1>"
         # final_tokens = "<custom_token_2><custom_token_6>"
 
         # start = f"<custom_token_3>{transcript}<|eot_id|><custom_token_4><custom_token_5>"
@@ -142,7 +136,6 @@ class Model:
             repeat_penalty=repeat_penalty,
         ):
             # <|eot_id|> = 128009, <custom_token_2> = 128258
-            # self.model.token_eos()
             if token in [128009, 128258] or len(outputs) >= max_tokens:
                 break
 
@@ -189,7 +182,6 @@ class Whisper:
             model=model,
             device=device,
             torch_dtype=getattr(torch, dtype),
-            model_kwargs={"attn_implementation": "flash_attention_2"},
         )
 
     def transcribe(self, audio: torch.FloatTensor) -> str:
@@ -197,31 +189,23 @@ class Whisper:
 
 
 if __name__ == "__main__":
-    speaker = "D:/AI/TTS/Voices/Alice.wav"
-    text = "The quick brown fox jumped over the lazy dog."
+    speaker = "path_to_speaker.wav"
+    text = (
+        "She sells seashells by the seashore."
+        "The shells she sells are seashells, I'm sure."
+        "So if she sells seashells on the seashore, then I'm sure she sells seashore shells."
+    )
 
-    codec = Codec("D:/AI/TTS/Orpheus/Models/Codec")
-    model = Model("D:/AI/TTS/Orpheus/Models/Orpheus/model.q8_0.gguf")
-    whisper = Whisper("D:/AI/TTS/Models/Turbo")
+    codec = Codec()
+    model = Model()
+    whisper = Whisper()
 
     audio = codec.load(speaker)
     codes = codec.encode(audio)
-
-    print(audio.device, audio.dtype, audio.shape)
-    print(codes[0].device, codes[0].dtype, codes[0].shape)
-    print(codes[1].device, codes[1].dtype, codes[1].shape)
-    print(codes[2].device, codes[2].dtype, codes[2].shape)
-
     transcript = whisper.transcribe(audio)
-    print(transcript)
 
     codes = model.generate(codes, transcript, text)
-    print(codes[0].device, codes[0].dtype, codes[0].shape)
-    print(codes[1].device, codes[1].dtype, codes[1].shape)
-    print(codes[2].device, codes[2].dtype, codes[2].shape)
-
     audio = codec.decode(codes)
-    print(audio.device, audio.dtype, audio.shape)
 
     codec.save(audio, "output.wav")
     model.unload()
