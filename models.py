@@ -1,9 +1,5 @@
-import contextlib
 import json
-import warnings
 from pathlib import Path
-
-warnings.simplefilter("ignore")
 
 import huggingface_hub as hf
 import safetensors.torch as st
@@ -28,16 +24,15 @@ class Orpheus:
         if not (path := Path(path)).is_file():
             path = Path(hf.hf_hub_download(path.as_posix(), file))
 
-        with contextlib.redirect_stderr(None), contextlib.redirect_stdout(None):
-            self.model = Llama(
-                model_path=str(path),
-                n_gpu_layers=-1,
-                n_ctx=context,
-                n_batch=context,
-                n_ubatch=context,
-                flash_attn=flash_attn,
-                verbose=False,
-            )
+        self.model = Llama(
+            model_path=str(path),
+            n_gpu_layers=-1,
+            n_ctx=context,
+            n_batch=context,
+            n_ubatch=context,
+            flash_attn=flash_attn,
+            verbose=False,
+        )
 
     def encode(self, text: str, bos: bool = False, special: bool = False) -> list[int]:
         return self.model.tokenize(text.encode(), bos, special)
@@ -142,7 +137,7 @@ class Snac:
         st.load_model(self.model, next(path.glob("*.safetensors")), device=self.device)
         self.model.to(self.device, self.dtype).eval()
 
-    def load(self, path: Path | str, max_len: int | None = None) -> torch.FloatTensor:
+    def load(self, path: Path | str, max_len: int | None = None) -> torch.Tensor:
         audio, sample_rate = torchaudio.load(path)
 
         if len(audio) > 1:
@@ -153,15 +148,15 @@ class Snac:
 
         return audio[:, :max_len]
 
-    def save(self, audio: torch.FloatTensor, path: Path | str) -> None:
+    def save(self, audio: torch.Tensor, path: Path | str) -> None:
         torchaudio.save(path, audio.cpu(), self.model.sampling_rate)
 
-    def encode(self, audio: torch.FloatTensor) -> list[torch.LongTensor]:
+    def encode(self, audio: torch.Tensor) -> list[torch.LongTensor]:
         with torch.inference_mode():
             audio = audio.to(self.device, self.dtype).unsqueeze(0)
             return self.model.encode(audio)
 
-    def decode(self, codes: list[torch.LongTensor]) -> torch.FloatTensor:
+    def decode(self, codes: list[torch.LongTensor]) -> torch.Tensor:
         with torch.inference_mode():
             codes = [c.to(self.device) for c in codes]
             return self.model.decode(codes).float().squeeze(0)
@@ -181,7 +176,7 @@ class Whisper:
             torch_dtype=getattr(torch, dtype),
         )
 
-    def transcribe(self, audio: torch.FloatTensor) -> str:
+    def transcribe(self, audio: torch.Tensor) -> str:
         return self.model(audio.squeeze().numpy())["text"].strip()
 
     def unload(self) -> None:
