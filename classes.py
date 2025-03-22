@@ -16,20 +16,18 @@ transformers.logging.set_verbosity_error()
 class Orpheus:
     def __init__(
         self,
-        path: Path | str = "annuvin/orpheus-3b-0.1-pt-gguf",
-        file: str = "model.q8_0.gguf",
-        context: int = 4096,
+        path: str | Path = "annuvin/orpheus-3b-0.1-pt-gguf",
+        model: str = "model.q8_0.gguf",
+        context: int = 8192,
         flash_attn: bool = True,
     ) -> None:
         if not (path := Path(path)).is_file():
-            path = Path(hf.hf_hub_download(path.as_posix(), file))
+            path = Path(hf.hf_hub_download(path.as_posix(), model))
 
         self.model = Llama(
             model_path=str(path),
             n_gpu_layers=-1,
             n_ctx=context,
-            n_batch=context,
-            n_ubatch=context,
             flash_attn=flash_attn,
             verbose=False,
         )
@@ -67,11 +65,11 @@ class Orpheus:
         end = [128009, 128260, 128261, 128257]
         final = [128258, 128262]
 
-        inputs = start + self.encode(transcript, bos=True) + end
-        inputs += ids + final
+        inputs = start + self.encode(transcript, bos=True) + end + ids + final
         inputs += start + self.encode(text, bos=True) + end
 
-        max_tokens = max(0, self.model.n_ctx() - len(inputs))
+        max_tokens = self.model.n_ctx() - len(inputs)
+        assert max_tokens > 0, "input too long, increase context"
         outputs = []
 
         for token in self.model.generate(
@@ -122,7 +120,7 @@ class Orpheus:
 class Snac:
     def __init__(
         self,
-        path: Path | str = "annuvin/snac-24khz-st",
+        path: str | Path = "annuvin/snac-24khz-st",
         device: str = "cuda",
         dtype: str = "float32",
     ) -> None:
@@ -137,7 +135,7 @@ class Snac:
         st.load_model(self.model, next(path.glob("*.safetensors")), device=self.device)
         self.model.to(self.device, self.dtype).eval()
 
-    def load(self, path: Path | str, max_len: int | None = None) -> torch.Tensor:
+    def load(self, path: str | Path, max_len: int | None = None) -> torch.Tensor:
         audio, sample_rate = torchaudio.load(path)
 
         if len(audio) > 1:
@@ -148,7 +146,7 @@ class Snac:
 
         return audio[:, :max_len]
 
-    def save(self, audio: torch.Tensor, path: Path | str) -> None:
+    def save(self, audio: torch.Tensor, path: str | Path) -> None:
         torchaudio.save(path, audio.cpu(), self.model.sampling_rate)
 
     def encode(self, audio: torch.Tensor) -> list[torch.LongTensor]:
@@ -165,13 +163,13 @@ class Snac:
 class Whisper:
     def __init__(
         self,
-        model: str = "openai/whisper-large-v3-turbo",
+        path: str | Path = "openai/whisper-large-v3-turbo",
         device: str = "cuda",
         dtype: str = "float16",
     ) -> None:
         self.model = transformers.pipeline(
             task="automatic-speech-recognition",
-            model=model,
+            model=Path(path).as_posix(),
             device=device,
             torch_dtype=getattr(torch, dtype),
         )
