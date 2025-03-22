@@ -1,4 +1,4 @@
-from models import Orpheus, Snac, Whisper
+from classes import Orpheus, Snac, Whisper
 from utils import Timer
 
 input = "path_to_speaker.wav"
@@ -26,10 +26,10 @@ with Timer("Transcribed audio"):
     transcript = whisper.transcribe(audio)
 
 with Timer("Generated audio"):
-    outputs = orpheus.generate(codes, transcript, text)
+    codes = orpheus.generate(codes, transcript, text)
 
 with Timer("Decoded audio"):
-    audio = snac.decode(outputs)
+    audio = snac.decode(codes)
 
 snac.save(audio, output)
 orpheus.unload()
