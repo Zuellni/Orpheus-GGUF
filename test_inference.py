@@ -1,7 +1,7 @@
 from classes import Orpheus, Snac, Whisper
 from utils import Timer
 
-input = "path_to_speaker.wav"
+input = "../../voices/marie.wav"
 output = "output.wav"
 text = (
     "She sells seashells by the seashore. "
@@ -10,13 +10,13 @@ text = (
 )
 
 with Timer("Loaded orpheus"):
-    orpheus = Orpheus()
+    orpheus = Orpheus("../models/orpheus-pt/model.q8_0.gguf")
 
 with Timer("Loaded snac"):
-    snac = Snac()
+    snac = Snac("../models/snac")
 
 with Timer("Loaded whisper"):
-    whisper = Whisper()
+    whisper = Whisper("../../models/turbo")
 
 with Timer("Encoded audio"):
     audio = snac.load(input)
