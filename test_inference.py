@@ -2,7 +2,7 @@ from classes import Orpheus, Snac, Whisper
 from utils import Timer
 
 input = "../../voices/marie.wav"
-output = "output.wav"
+output = "orpheus.wav"
 text = (
     "She sells seashells by the seashore. "
     "The shells she sells are seashells, I'm sure. "
