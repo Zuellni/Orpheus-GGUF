@@ -4,7 +4,7 @@
 ## Installation
 Clone the repo:
 ```sh
-git clone --recursive https://github.com/zuellni/orpheus-gguf
+git clone https://github.com/zuellni/orpheus-gguf
 cd orpheus-gguf
 ```
 
