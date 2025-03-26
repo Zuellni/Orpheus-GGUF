@@ -32,8 +32,11 @@ class Orpheus:
             verbose=False,
         )
 
-    def encode(self, text: str, bos: bool = False, special: bool = False) -> list[int]:
-        return self.model.tokenize(text.encode(), bos, special)
+    def encode(
+        self, text: str, add_bos: bool = False, add_eos=False, special: bool = False
+    ) -> list[int]:
+        tokens = self.model.tokenize(text.encode(), add_bos, special)
+        return tokens + [self.model.token_eos()] if add_eos else tokens
 
     def decode(self, tokens: list[int], special: bool = False) -> str:
         return self.model.detokenize(tokens, special=special).decode()
@@ -50,23 +53,31 @@ class Orpheus:
         temp: float = 0.5,
         repeat_penalty: float = 1.1,
     ) -> list[torch.LongTensor]:
-        ids = []
+        speech = []
 
         for i in range(codes[0].shape[1]):
-            ids.append(codes[0][0][i].item() + 128266)
-            ids.append(codes[1][0][2 * i].item() + 128266 + 4096)
-            ids.append(codes[2][0][4 * i].item() + 128266 + (2 * 4096))
-            ids.append(codes[2][0][(4 * i) + 1].item() + 128266 + (3 * 4096))
-            ids.append(codes[1][0][(2 * i) + 1].item() + 128266 + (4 * 4096))
-            ids.append(codes[2][0][(4 * i) + 2].item() + 128266 + (5 * 4096))
-            ids.append(codes[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
+            speech.append(codes[0][0][i].item() + 128266)
+            speech.append(codes[1][0][2 * i].item() + 128266 + 4096)
+            speech.append(codes[2][0][4 * i].item() + 128266 + (2 * 4096))
+            speech.append(codes[2][0][(4 * i) + 1].item() + 128266 + (3 * 4096))
+            speech.append(codes[1][0][(2 * i) + 1].item() + 128266 + (4 * 4096))
+            speech.append(codes[2][0][(4 * i) + 2].item() + 128266 + (5 * 4096))
+            speech.append(codes[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
 
-        start = [128259]
-        end = [128009, 128260, 128261, 128257]
-        final = [128258, 128262]
+        start_of_speech = [128257]
+        end_of_speech = [128258]
+        start_of_human = [128259]
+        end_of_human = [128260]
+        start_of_ai = [128261]
+        end_of_ai = [128262]
 
-        inputs = start + self.encode(transcript, bos=True) + end + ids + final
-        inputs += start + self.encode(text, bos=True) + end
+        transcript = self.encode(transcript, add_bos=True, add_eos=True)
+        text = self.encode(text, add_bos=True, add_eos=True)
+
+        inputs = start_of_human + transcript + end_of_human
+        inputs += start_of_ai + start_of_speech + speech + end_of_speech + end_of_ai
+        inputs += start_of_human + text + end_of_human
+        inputs += start_of_ai + start_of_speech
 
         max_tokens = self.model.n_ctx() - len(inputs)
         assert max_tokens > 0, "input too long, increase context"
@@ -81,7 +92,7 @@ class Orpheus:
             temp=temp,
             repeat_penalty=repeat_penalty,
         ):
-            if token in [self.model.token_eos(), 128258] or len(outputs) >= max_tokens:
+            if token in end_of_speech or len(outputs) >= max_tokens:
                 break
 
             outputs.append(token)
