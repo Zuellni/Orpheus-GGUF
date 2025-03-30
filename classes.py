@@ -16,7 +16,7 @@ transformers.logging.set_verbosity_error()
 class Orpheus:
     def __init__(
         self,
-        path: str | Path = "annuvin/orpheus-3b-0.1-pt-gguf",
+        path: str | Path = "zuellni/orpheus-3b-0.1-pt-gguf",
         model: str = "model.q8_0.gguf",
         context: int = 8192,
         flash_attn: bool = True,
@@ -131,7 +131,7 @@ class Orpheus:
 class Snac:
     def __init__(
         self,
-        path: str | Path = "annuvin/snac-24khz-st",
+        path: str | Path = "zuellni/snac-24khz-st",
         device: str = "cuda",
         dtype: str = "float32",
     ) -> None:
