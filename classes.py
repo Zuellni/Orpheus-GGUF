@@ -43,7 +43,7 @@ class Orpheus:
 
     def generate(
         self,
-        codes: list[torch.LongTensor],
+        codes: list[int],
         transcript: str,
         text: str,
         top_k: int = 40,
@@ -52,18 +52,7 @@ class Orpheus:
         typical_p: float = 1.0,
         temp: float = 0.5,
         repeat_penalty: float = 1.1,
-    ) -> list[torch.LongTensor]:
-        speech = []
-
-        for i in range(codes[0].shape[1]):
-            speech.append(codes[0][0][i].item() + 128266)
-            speech.append(codes[1][0][2 * i].item() + 128266 + 4096)
-            speech.append(codes[2][0][4 * i].item() + 128266 + (2 * 4096))
-            speech.append(codes[2][0][(4 * i) + 1].item() + 128266 + (3 * 4096))
-            speech.append(codes[1][0][(2 * i) + 1].item() + 128266 + (4 * 4096))
-            speech.append(codes[2][0][(4 * i) + 2].item() + 128266 + (5 * 4096))
-            speech.append(codes[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
-
+    ) -> list[int]:
         start_of_speech = [128257]
         end_of_speech = [128258]
         start_of_human = [128259]
@@ -75,7 +64,7 @@ class Orpheus:
         text = self.encode(text, add_bos=True, add_eos=True)
 
         inputs = start_of_human + transcript + end_of_human
-        inputs += start_of_ai + start_of_speech + speech + end_of_speech + end_of_ai
+        inputs += start_of_ai + start_of_speech + codes + end_of_speech + end_of_ai
         inputs += start_of_human + text + end_of_human
         inputs += start_of_ai + start_of_speech
 
@@ -97,35 +86,13 @@ class Orpheus:
 
             outputs.append(token)
 
-        outputs = outputs[: len(outputs) // 7 * 7]
-        outputs = [o - 128266 for o in outputs]
-
-        layer_0 = []
-        layer_1 = []
-        layer_2 = []
-
-        for i in range((len(outputs) + 1) // 7):
-            layer_0.append(outputs[7 * i])
-            layer_1.append(outputs[7 * i + 1] - 4096)
-            layer_2.append(outputs[7 * i + 2] - (2 * 4096))
-            layer_2.append(outputs[7 * i + 3] - (3 * 4096))
-            layer_1.append(outputs[7 * i + 4] - (4 * 4096))
-            layer_2.append(outputs[7 * i + 5] - (5 * 4096))
-            layer_2.append(outputs[7 * i + 6] - (6 * 4096))
-
-        return [
-            torch.LongTensor([layer_0]),
-            torch.LongTensor([layer_1]),
-            torch.LongTensor([layer_2]),
-        ]
+        return outputs
 
     def unload(self) -> None:
         if self.model._sampler:
             self.model._sampler.close()
 
         self.model.close()
-        self.model = None
-        torch.cuda.empty_cache()
 
 
 class Snac:
@@ -138,12 +105,14 @@ class Snac:
         if not (path := Path(path)).is_dir():
             path = Path(hf.snapshot_download(path.as_posix()))
 
-        self.config = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
         self.device = device
         self.dtype = getattr(torch, dtype)
 
-        self.model = SNAC(**self.config)
-        st.load_model(self.model, next(path.glob("*.safetensors")), device=self.device)
+        config = json.loads(next(path.glob("*.json")).read_text(encoding="utf-8"))
+        state_dict = st.load_file(next(path.glob("*.safetensors")))
+
+        self.model = SNAC(**config)
+        self.model.load_state_dict(state_dict)
         self.model.to(self.device, self.dtype).eval()
 
     def load(self, path: str | Path, max_len: int | None = None) -> torch.Tensor:
@@ -155,19 +124,52 @@ class Snac:
         if sample_rate != self.model.sampling_rate:
             audio = tf.resample(audio, sample_rate, self.model.sampling_rate)
 
-        return audio[:, :max_len]
+        return audio[:, :max_len].to(self.device, self.dtype)
 
     def save(self, audio: torch.Tensor, path: str | Path) -> None:
         torchaudio.save(path, audio.cpu(), self.model.sampling_rate)
 
-    def encode(self, audio: torch.Tensor) -> list[torch.LongTensor]:
+    def encode(self, audio: torch.Tensor) -> list[int]:
         with torch.inference_mode():
-            audio = audio.to(self.device, self.dtype).unsqueeze(0)
-            return self.model.encode(audio)
+            layers = self.model.encode(audio.unsqueeze(0))
 
-    def decode(self, codes: list[torch.LongTensor]) -> torch.Tensor:
+        codes = []
+
+        for i in range(layers[0].shape[1]):
+            codes.append(layers[0][0][i].item() + 128266)
+            codes.append(layers[1][0][2 * i].item() + 128266 + 4096)
+            codes.append(layers[2][0][4 * i].item() + 128266 + (2 * 4096))
+            codes.append(layers[2][0][(4 * i) + 1].item() + 128266 + (3 * 4096))
+            codes.append(layers[1][0][(2 * i) + 1].item() + 128266 + (4 * 4096))
+            codes.append(layers[2][0][(4 * i) + 2].item() + 128266 + (5 * 4096))
+            codes.append(layers[2][0][(4 * i) + 3].item() + 128266 + (6 * 4096))
+
+        return codes
+
+    def decode(self, codes: list[int]) -> torch.Tensor:
+        codes = codes[: len(codes) // 7 * 7]
+        codes = [c - 128266 for c in codes]
+
+        layer_0 = []
+        layer_1 = []
+        layer_2 = []
+
+        for i in range((len(codes) + 1) // 7):
+            layer_0.append(codes[7 * i])
+            layer_1.append(codes[7 * i + 1] - 4096)
+            layer_2.append(codes[7 * i + 2] - (2 * 4096))
+            layer_2.append(codes[7 * i + 3] - (3 * 4096))
+            layer_1.append(codes[7 * i + 4] - (4 * 4096))
+            layer_2.append(codes[7 * i + 5] - (5 * 4096))
+            layer_2.append(codes[7 * i + 6] - (6 * 4096))
+
+        codes = [
+            torch.LongTensor([layer_0], device=self.device),
+            torch.LongTensor([layer_1], device=self.device),
+            torch.LongTensor([layer_2], device=self.device),
+        ]
+
         with torch.inference_mode():
-            codes = [c.to(self.device) for c in codes]
             return self.model.decode(codes).float().squeeze(0)
 
 
@@ -187,7 +189,3 @@ class Whisper:
 
     def transcribe(self, audio: torch.Tensor) -> str:
         return self.model(audio.squeeze().numpy())["text"].strip()
-
-    def unload(self) -> None:
-        self.model = None
-        torch.cuda.empty_cache()
