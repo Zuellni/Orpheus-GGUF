@@ -124,16 +124,20 @@ class Snac:
         if sample_rate != self.model.sampling_rate:
             audio = tf.resample(audio, sample_rate, self.model.sampling_rate)
 
-        return audio[:, :max_len].to(self.device, self.dtype)
+        if max_len is not None:
+            audio = audio[:, : max_len * self.model.sampling_rate]
+
+        return self.model.preprocess(audio)
 
     def save(self, audio: torch.Tensor, path: str | Path) -> None:
         torchaudio.save(path, audio.cpu(), self.model.sampling_rate)
 
     def encode(self, audio: torch.Tensor) -> list[int]:
-        with torch.inference_mode():
-            layers = self.model.encode(audio.unsqueeze(0))
-
+        audio = audio.to(self.device, self.dtype).unsqueeze(0)
         codes = []
+
+        with torch.inference_mode():
+            layers = self.model.encode(audio)
 
         for i in range(layers[0].shape[1]):
             codes.append(layers[0][0][i].item() + 128266)
@@ -164,9 +168,9 @@ class Snac:
             layer_2.append(codes[7 * i + 6] - (6 * 4096))
 
         codes = [
-            torch.LongTensor([layer_0], device=self.device),
-            torch.LongTensor([layer_1], device=self.device),
-            torch.LongTensor([layer_2], device=self.device),
+            torch.tensor([layer_0], dtype=torch.long, device=self.device),
+            torch.tensor([layer_1], dtype=torch.long, device=self.device),
+            torch.tensor([layer_2], dtype=torch.long, device=self.device),
         ]
 
         with torch.inference_mode():
