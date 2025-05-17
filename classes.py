@@ -18,6 +18,7 @@ class Orpheus:
         self,
         path: str | Path = "zuellni/orpheus-3b-0.1-pt-gguf",
         model: str = "model.q8_0.gguf",
+        seed: int = -1,
         context: int = 8192,
         flash_attn: bool = True,
     ) -> None:
@@ -27,6 +28,7 @@ class Orpheus:
         self.model = Llama(
             model_path=str(path),
             n_gpu_layers=-1,
+            seed=seed,
             n_ctx=context,
             flash_attn=flash_attn,
             verbose=False,
